@@ -1,0 +1,279 @@
+---
+title: "Group meeting 02/25/22"
+author: "Qian Zhao"
+date: "2/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", fig.width = 4, fig.height = 3)
+# install.packages("SNPknock")
+library(SNPknock)
+load("~/Documents/Work/Presentation/Group meeting/data.RData")
+library(tidyverse)
+library(glmhd)
+```
+
+
+## An example with synthetic gene expression data
+
+We sample $X$ from a Hidden Markov Model (HMM). This HMM is fitted by running the \verb+fastPhase+ software on a synthetic dataset of 1454 phased haplotype SNPs from 100 individuals (see https://msesia.github.io/snpknock/articles/genotypes.html). In the markdown file, I only use the first 400 SNPs to reduce the computation, and so the code is slightly different those in the from the slides. The following code creates one covariate matrix $X\in\R^{n\times p}$. 
+
+```{r}
+n <- 2000; p <- 400
+```
+
+```{r}
+XX = sampleHMM(hmm$pInit, hmm$Q, hmm$pEmit,n=n)
+XX <- XX[ ,1:400]
+X = apply(XX, 2, function(x) {return((x-mean(x))/sd(x))})/sqrt(n)
+```
+
+We randomly sample coefficients by picking 40 variables to be non-nulls and sample their magnitudes to be i.i.d. Gaussian. 
+
+```{r}
+beta <- numeric(p)
+nonnull <- sample(1:p, 40, replace = F)
+beta[nonnull] <- rnorm(40, 0, 10)
+```
+
+Finally, we sample $Y$ by a logistic model.
+
+```{r}
+mu <- 1 / (1+exp(- X %*% beta))
+Y <- rbinom(n, 1, mu)
+```
+
+We can fit the MLE by calling the \verb+glm+ function.
+
+```{r}
+fit <- glm(Y ~ X + 0, family=binomial)
+```
+
+Putting these together, the following function generates one data set $X\in \mathbb{R}^{n\times p}$ and $Y\in\mathbb{R}^n$.
+
+```{r}
+sample_obs <- function(){
+  XX <-  sampleHMM(hmm$pInit, hmm$Q, hmm$pEmit,n=n)
+  XX <- XX[, 1:400]
+  X = scale(XX) /sqrt(n)
+  mu <- 1 / (1+exp(-X %*% beta))
+  Y <- rbinom(n, 1, mu)
+  
+  list(X = X, Y = Y)
+}
+```
+
+We generate 50 random samples to compute the mean and standard error of the MLE. 
+
+```{r}
+B <- 50
+BetaHat <- matrix(0, B, p)
+StdR <- matrix(0, B, p)
+for(b in 1:B){
+  newObs <- sample_obs()
+  fit <- glm(newObs$Y ~ newObs$X + 0, family=binomial)
+  BetaHat[b, ] <- fit$coef
+  StdR[b, ] <- summary(fit)$coef[ ,2]
+#  if(b %% 10 == 0) cat(b, ",")
+}
+```
+
+## Bias and variance of the MLE
+
+According to classical theory, the average MLE should be approximately the true model coefficient. We also show a line with zero intercept and unit slope. We can see that the absolute value of the MLE is biased upwards.
+
+```{r}
+ggplot() + geom_point(aes(x = beta[nonnull], y = colMeans(BetaHat)[nonnull])) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  xlab("True coefficients") + 
+  ylab("Average MLE") + 
+  theme_bw()
+```
+
+Next, we compare the empirical standard deviation of the MLE with the estimate by R. We observe that the classical theory underestimates the standard deviation of the MLE. 
+
+```{r}
+ggplot() + 
+  geom_point(aes(x = colMeans(StdR), y = apply(BetaHat, 2, sd))) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  xlab("Estimated Std.Dev by R") + 
+  ylab("Empirical Std.Dev") + 
+  theme_bw()
+```
+
+## Applying high-dimensional theory to the synthetic data
+
+I have precomputed the estimated covariance matrix and I use the pre-computed covariance matrix to compute the signal strength parameter.
+
+```{r}
+gamma <- sqrt(t(beta) %*% (SigmaSmall %*% beta)) # compute the signal strength
+params <- find_param(kappa = p/n, gamma = gamma, beta0 = 0, intercept = F) # compute the parameters alpha_star and sigma_star
+# compute tau
+tau <- 1 / sqrt(diag(solve(SigmaSmall)))
+# compute the theoretical std 
+# Note: sigma_star is param[3] / sqrt(kappa)
+std_theory <- (params[3] / sqrt(p/n)) / tau / sqrt(n)
+```
+
+We can compare the estimated standard deviation with the empirical Std.Dev. The estimated standard deviation aligns on a line with the empirical Std.Dev. The estimated bias is `R params[1]`.
+
+**Note** I realized that standardizing makes the theory not directly apply because the theory works with i.i.d. samples, a better example would not standardize. 
+
+```{r}
+ggplot() + 
+  geom_point(aes(x = std_theory, y = apply(BetaHat, 2, sd))) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  xlab("Estimated Std.Dev by high-dim theory") + 
+  ylab("Empirical Std.Dev") + 
+  theme_bw()
+```
+
+## An exammple with non-Gaussian covariates 
+
+In this example, we sample covariates from a multivariate $t$-distribution. 
+
+```{r}
+n <- 2000; p <- 200
+```
+
+We set up the covariance matrix and write a function to sample the covariates. 
+
+```{r}
+# set the covariance matrix to be a circular matrix
+rho <- 0.5
+x <- rho^(c(0:(p/2), (p/2-1):1))
+Sigma <- toeplitz(x)
+R <- chol(Sigma)
+
+# the MVT has 8 degrees of freedom
+nu <- 8
+```
+
+```{r}
+sample_x <- function(){
+  X <- matrix(rnorm(n*p, 0, 1), n, p) 
+  chi <- rchisq(n, df = nu) / (nu - 2)
+  X <- X %*% R / sqrt(chi) / sqrt(p)
+}
+```
+
+Then, we randomly sample coefficients and we sample the response from a logistic model.  
+
+```{r}
+beta <- numeric(p)
+nonnull <- sample(1:p, 20, replace = F)
+beta[nonnull] <- rnorm(20, 5, 1) * sample(c(-1, 1), size = 20, replace = T)
+```
+
+```{r}
+sample_y <- function(X, beta){
+  mu <- 1 / ( 1 + exp(-X %*% beta))
+  Y <- rbinom(n, 1, mu)
+  Y
+}
+```
+
+We repeat this experiment 200 times to compute the bias and standard deviation of the MLE. 
+
+```{r}
+B <- 200
+BetaHat <- matrix(0, B, p)
+for(b in 1:B){
+  X <- sample_x()
+  Y <- sample_y(X, beta)
+  fit <- glm(Y ~ X + 0, family = binomial)
+  BetaHat[b, ] <- fit$coef
+  
+#   cat(b, ",")
+}
+```
+
+We compute the parameters from the high-dimensional theory and we obtain the estimated bias and standard deviation 
+
+```{r}
+gamma <- sqrt(beta %*% (Sigma %*% beta) / p) # the covariance matrix of X is Sigma
+
+# solve the parameter in the high-dimensional theory
+params <- find_param(kappa = p/n, gamma = gamma, beta0 = 0, intercept = F)
+# compute tau
+tau <- 1 / sqrt(diag(solve(Sigma)))
+# compute the theoretical std
+std_theory <- params[3] / tau
+# empirical std
+std_empirical <- apply(BetaHat, 2, sd)
+```
+
+The covariance matrix is special in that the theoretical standard deviation are equal for every coordinate, so we plot a histogram of the empirical standard deviation and show the theoretical value by the black line. Since we observe that the theoretical Std. Dev underestimates the empirical Std.Dev, we expect that the CI using the high-dimensional theory would undercover true model coefficients.
+
+```{r}
+ggplot() + geom_histogram(aes(x = std_empirical), bins = 25) + 
+  geom_vline(xintercept = std_theory[1]) + 
+  xlab("Empirical Std.Dev of the MLE") + 
+  theme_bw()
+```
+
+## The resized bootstrap method 
+
+We now apply the resized bootstrap. Remember that we want to choose $\beta^s = s \times \hat{\beta}$ such that 
+\[
+\mathrm{Var}(X^\top \beta^s) = \beta^{s\top} \Sigma \beta^s / p = \gamma^2. 
+\]
+This implies
+\[
+s^2 = \frac{\gamma^2}{\hat{\beta}^\top \Sigma \hat{\beta} / p}. 
+\]
+
+```{r}
+# Obtain one data
+X <- sample_x()
+Y <- sample_y(X, beta)
+fit <- glm(Y ~ X + 0, family = binomial)
+beta_hat <- fit$coef
+```
+
+```{r}
+# Compute s
+s <- gamma / sqrt(t(beta_hat) %*% (Sigma %*% beta_hat) / p)
+# Compute beta_s
+beta_s <- s[1,1] * beta_hat 
+```
+
+After computing $s$, we generate bootstrap samples and compute the bootstrap MLE.
+
+```{r}
+B <- 100
+boot <- matrix(0, B, p)
+for(b in 1:B){
+  mub <- 1/(1+exp(-X%*%beta_s))
+  Yb <- rbinom(n, 1, mub)
+  
+  fit_b <- glm(Yb ~ X + 0, family = binomial)
+  boot[b, ] <- fit_b$coef
+#  cat(b, ",")
+}
+```
+
+We estimate the bias and the variance using the bootstrap sample. 
+
+```{r}
+# standard deviation
+std_boot <- apply(boot, 2, sd)
+# estimate the bias
+alpha_boot <- lm(colMeans(boot) ~ beta_s, weights = 1/std_boot^2)$coef
+```
+
+We can compare the average Std. Dev estimated using the resized bootstrap with the empirical Std. Dev and we see that they are similar. 
+
+```{r}
+mean(std_boot)
+mean(std_empirical)
+```
+
+
+
+
+
+
+
+
