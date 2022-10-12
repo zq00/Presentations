@@ -1,0 +1,139 @@
+---
+title: Fisher's Analysis of Iris Data
+thanks: 
+  - ref: T1 
+    text: Based on the article "The Use of Multiple Measurements in Taxonomic Problems" by R. A. Fisher (1936)
+runtitle: Iris Data 
+author:
+  - name: Qian 
+    surname: Zhao
+    email: qzhao1@stanford.edu
+    label: e1
+    addressLabel: A
+
+
+affiliation:
+  - label: A
+    name: Department of Biomedical Data Science, Stanford University
+    authorsLabels: e1
+abstract: |
+  I use an analysis of the Iris data set to illustrate how to use the "rticles" package to create a reproducible manuscript. 
+keyword-subclass: | 
+ \begin{keyword}[class=MSC2020] % It must be define for aap, aop, aos journals. For aoas, sts is not used
+ \kwd[Primary ]{00X00}
+ \kwd{00X00}
+ \kwd[; secondary ]{00X00}
+ \end{keyword}
+keywords: 
+  - reproducible manuscript
+  - iris data
+
+predefined-theoremstyle: true # use in section Environments for Axiom, Theorem, etc
+bibliography: ims.bib
+biblio-style: imsart-nameyear # alternative: imsart-number
+output:
+  rticles::ims_article:
+    journal: aoas # aap, aoas, aop, aos, sts. See documentation
+    toc: false # Please use for articles with 50 pages and more
+
+header-includes: 
+ - \usepackage{caption} 
+ - \usepackage{subcaption}
+---
+
+
+
+```{r load_data, echo = F}
+data(iris) 
+```
+
+# The iris data
+The Iris data, collected by Dr. E. Anderson, contains measurements of the flowers of fifty plants each of the two species \textit{Iris setosa} and \textit{I.versicolor}. Figure \ref{fig:iris} shows pictures of the two species. The data includes four measurements: sepal length, sepal width, petal length, and petal width. A few rows of the data are shown in Table 
+
+\begin{figure}
+     \centering
+     \begin{subfigure}[b]{0.4\textwidth}
+         \centering
+         \includegraphics[width=4cm]{setosa}
+         \caption{\textit{Iris setosa}}
+     \end{subfigure}
+     \begin{subfigure}[b]{0.4\textwidth}
+         \centering
+         \includegraphics[width=4cm]{versicolor.jpeg}
+         \caption{\textit{I.versicolor}}
+     \end{subfigure}
+        \caption{Two iris species}
+        \label{fig:iris}
+\end{figure}
+
+```{r iris_data, echo = F}
+tab <- kableExtra::kbl(iris[1:5, ], caption = "First few rows in the iris data", row.names = F,  vline = "", linesep = "")
+kableExtra::kable_styling(tab, latex_options = "hold_position")
+```
+
+# Fisher linear discriminant analysis
+
+In a 1936 article, @fisher1936 considered the question: what linear function of the four measurements
+\begin{equation}
+X = \lambda_1 x_1 + \lambda_2 x_2 + \lambda_3 x_3 + \lambda_4 x_4
+\end{equation}
+maximizes the \textit{ratio} of the difference between the means to the standard deviation within species? 
+
+The observed means and their differences are shown in Table \ref{tab:iris_mean}. We can also compute the sum of squares and products of deviation from specific means of each species (Table \ref{tab:compute_var}). 
+
+
+```{r compute_mean, echo = F}
+iris_means <- dplyr::tibble(
+  Variable = c("Sepal length", "Sepal width", 
+               "Petal length", "Petal Width"),
+  Versicolor = colMeans(subset(iris, Species == "versicolor")[,-5]),
+  Setosa = colMeans(subset(iris, Species == "setosa")[,-5]),
+  Difference = Versicolor - Setosa
+)
+```
+
+
+```{r iris_mean, echo = F}
+tab2 <-  kableExtra::kbl(iris_means, caption = "Observed means for two species and their difference (cm.)", row.names = F, format = "latex", vline = "", linesep = "") 
+kableExtra::kable_styling(tab2, latex_options = "hold_position")
+```
+
+```{r compute_var, echo = F}
+iris_centered <- rbind( scale(subset(iris, Species == "setosa")[,-5], scale = F ),
+       scale(subset(iris, Species == "versicolor")[,-5], scale = F )) 
+
+cov <- t(iris_centered) %*% iris_centered
+row.names(cov) <- c("Sepal length", "Sepal width",  "Petal length", "Petal Width")
+colnames(cov)<- c("Sepal length", "Sepal width",  "Petal length", "Petal Width")
+
+tab3 <- kableExtra::kbl(cov, 
+             caption = "Sums of squares and products of four measurements, within species (cm.2)", 
+             row.names = T, format = "latex",  vline = "", linesep = "")
+kableExtra::kable_styling(tab3, latex_options = "hold_position")
+```
+
+The linear combination that maximizes $D^2/S$, where
+\begin{equation}
+D = \lambda_1 d_1 +\lambda_2 d_2+\lambda_3 d_3+\lambda_4 d_4,
+\end{equation}
+where $d_i$ are the differences between the species means and 
+\begin{equation}
+S = \sum_{p=1}^4\sum_{q=1}^4 \lambda_p\lambda_qS_{pq},
+\end{equation}
+is the solution to a set of linear equations 
+\begin{equation}
+\begin{cases}
+S_{11}\lambda_1 + S_{12}\lambda_2 + S_{13}\lambda_3 + S_{14}\lambda_4 = d_1, \\
+S_{21}\lambda_1 + S_{22}\lambda_2 + S_{23}\lambda_3 + S_{24}\lambda_4 = d_2, \\ 
+S_{31}\lambda_1 + S_{32}\lambda_2 + S_{33}\lambda_3 + S_{34}\lambda_4 = d_3, \\ 
+S_{41}\lambda_1 + S_{42}\lambda_2 + S_{43}\lambda_3 + S_{44}\lambda_4 = d_4. \\ 
+\end{cases}
+\end{equation}
+
+```{r, echo = F}
+lambda = solve(cov) %*% iris_means$Difference
+```
+
+For the iris data, the solution is `r paste0("(",paste(round(lambda,2), collapse=","),")")`.
+
+
