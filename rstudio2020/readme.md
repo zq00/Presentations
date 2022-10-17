@@ -1,0 +1,1 @@
+This directory contains slides for the R studio conference 2020 (see [video](https://www.rstudio.com/resources/rstudioconf-2020/forecasting-platelet-blood-bag-demand-to-reduce-inventory-wastage-at-the-stanford-blood-center/))
